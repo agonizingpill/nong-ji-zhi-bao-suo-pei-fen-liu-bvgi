@@ -1,7 +1,7 @@
 import random, json
 from sqlalchemy import select,func
 from src.database import Base,engine,Session
-from src.models import User,Machine,Claim,Inspection
+from src.models import User,Machine,Claim,Inspection,ModelState
 from src.security import password_hash
 from src.return_models import PartReturn
 from src.settlement_models import Settlement
@@ -14,8 +14,9 @@ def seed():
     with Session.begin() as s:
         for role in ['admin','assessor','viewer']:
             if not s.scalar(select(User).where(User.email==f'{role}@gengchuan.local')):s.add(User(email=f'{role}@gengchuan.local',password=password_hash('Field2026!'),role=role))
-        for serial,model,hours in [('GC-2408','Paddy-90',860),('GC-2412','Dryland-120',1120),('GC-EXPIRED','Paddy-90',2450)]:
+        for serial,model,hours in [('GC-2408','Paddy-90',860),('GC-2412','Dryland-120',1120),('GC-EXPIRED','Paddy-90',2450),('GC-2601','Orchard-60',320),('GC-2602','Paddy-90',90)]:
             if not s.scalar(select(Machine).where(Machine.serial==serial)):s.add(Machine(serial=serial,model=model,purchase_date='2025-04-12',warranty_hours=2000,hours=hours))
+        if not s.get(ModelState,1):s.add(ModelState(id=1,epoch=1,note='初始评分基线'))
         s.flush(); machines=s.scalars(select(Machine).order_by(Machine.id)).all()
         rng=random.Random(42)
         for i in range(180):
@@ -24,9 +25,9 @@ def seed():
             hours=rng.randint(100,2900); age=rng.randint(30,1100); leak=rng.random()<.38; part=rng.choice(['hydraulic','engine','transmission'])
             score=hours/2000+age/1300+(.7 if leak else 0)+(.3 if part=='hydraulic' else 0)+rng.uniform(-.25,.25)
             s.add(Claim(code=code,machine_id=machines[i%2].id,part=part,hours_at_failure=hours,age_days=age,leak_flag=leak,risk=None,status='denied' if score>1.7 else 'paid',historical=True,disputed=int(score>1.7),assessment_note='历史已结案 / 模拟训练数据'))
-        for code,serial,hours,age,leak in [('CL-26017','GC-2408',860,400,True),('CL-HIGH','GC-2412',1900,680,True),('CL-EXPIRED','GC-EXPIRED',2450,600,False)]:
+        for code,serial,part,hours,age,leak in [('CL-26017','GC-2408','hydraulic',860,400,True),('CL-HIGH','GC-2412','hydraulic',1900,680,True),('CL-EXPIRED','GC-EXPIRED','hydraulic',2450,600,False),('CL-NEWMODEL','GC-2601','engine',320,120,False),('CL-LOWHOURS','GC-2602','hydraulic',95,60,False)]:
             if not s.scalar(select(Claim).where(Claim.code==code)):
-                m=s.scalar(select(Machine).where(Machine.serial==serial));s.add(Claim(code=code,machine_id=m.id,part='hydraulic',hours_at_failure=hours,age_days=age,leak_flag=leak,status='submitted',historical=False,assessment_note=''))
+                m=s.scalar(select(Machine).where(Machine.serial==serial));s.add(Claim(code=code,machine_id=m.id,part=part,hours_at_failure=hours,age_days=age,leak_flag=leak,status='submitted',historical=False,assessment_note=''))
     with Session.begin() as s:
         m=s.scalar(select(Machine).where(Machine.serial=='GC-2408'))
         for code in ['CL-RETURN-DEMO','CL-SETTLE-DEMO']:

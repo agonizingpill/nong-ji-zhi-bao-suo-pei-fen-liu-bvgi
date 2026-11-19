@@ -51,7 +51,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 |队列|Redis7 list；共享 artifacts 卷保存模型指标与心跳|
 |安全横切|JWT8小时、角色校验、PBKDF2口令、审计、请求追踪、全局错误恢复|
 
-`backend/src/models.py` 领域实体；`schemas.py` 请求约束；`claim_service.py` 状态与关联规则；`risk_model.py` 算法；`worker.py` 队列；`main.py` 路由；`middlewares.py` 请求追踪和错误恢复。`backend/scripts/seed_demo.py` 仅插入自然键缺失的演示记录，不覆盖修改。`frontend/src/pages/` 九业务页；`components/common.js` 共享导航、状态、标题和通知；`utils/api.js` API/会话/页面状态；`utils/format.js` 转义和格式化。
+`backend/src/models.py` 领域实体；`schemas.py` 请求约束；`claim_service.py` 状态与关联规则；`risk_model.py` 算法；`coverage_rule.py` 覆盖判定；`worker.py` 队列；`main.py` 路由；`middlewares.py` 请求追踪和错误恢复。`backend/scripts/seed_demo.py` 仅插入自然键缺失的演示记录，不覆盖修改。`frontend/src/pages/` 九业务页；`components/common.js` 共享导航、状态、标题和通知；`utils/api.js` API/会话/页面状态；`utils/format.js` 转义和格式化。
 
 角色、索赔状态、故障部位枚举分别在 `backend/src/constants.py` 与 `frontend/src/constants.js` 定义；请求部位在 `backend/src/schemas.py` 的 Literal 中约束；角色校验在 `security.py`/`main.py`，状态转换在 `claim_service.py`/`worker.py`。共用状态徽标在索赔/风险/拆检三页复用。
 
@@ -94,6 +94,21 @@ Seed 另有 `CL-RETURN-DEMO`（已赔付、可发件）和 `CL-SETTLE-DEMO`（�
 seed新增BAY-HYD(8h/日)、BAY-QUICK(4h/日)、BAY-OFF停用，以及hydraulic20/engine5/transmission3件备件。可用CL-RETURN-DEMO或CL-SETTLE-DEMO已赔付索赔演练预约→匹配领料→开工→完工→质量回访；异常再安排同索赔新预约返工后主管关闭。自然键只补缺失，重复seed不改已扣库存、维修实耗、工位容量、回访与原结算。新增5张表，不给原历史表加列，也不回填改变旧签结。
 
 当前范围：预约为按日工时额度，无具体起止时刻、跨工位调度或取消；完工超时只留主管依据，不重分配其他预约。工位停用只阻止新预约，已确认维修仍可履约；无工资、采购补货、拆单部分退料、仓库扫码或真实售后联系。回访是人工登记，不外发消息；异常关闭证明同索赔返工完工，不替代另一轮质量验收或重开原赔款。新增证据见 `test-artifacts/gb-1022/v3/`。
+
+## 覆盖复核与评分基线（第四轮扩展）
+
+10. 覆盖判定：worker 评分时按当次实际用于训练的样本（分层划分的训练侧）判定覆盖。机型×部件组合未出现在训练样本，或报损工时越出该组合训练范围，索赔置 `coverage=manual_review` 并记录转人工缘由；争议概率保留但仅作参考——新机型算出再低的概率也不能直接放行。
+11. 复核签赔：转人工单签赔须主管先留存复核依据（≥8字）且拆检证据齐全；已覆盖单维持高风险 ≥0.5 需证据规则。索赔页可查看转人工缘由、填写复核依据并完成签赔/拒赔，拆检裁决页同步展示覆盖信息。
+12. 评分基线：`model_state` 单行表记录 epoch。`POST /model/upgrade` 模拟旧数据升级：epoch+1，缺覆盖依据或基于旧 epoch 的待裁决单一律转 queued 重算，已签单保留原判；重算会清空旧复核依据。签赔走行锁并校验 epoch，补评分与签赔并发时旧概率不能放行。
+
+|接口|权限与用途|
+|---|---|
+|GET /model/state|三角色读取评分基线 epoch|
+|POST /model/upgrade|admin 旧数据升级并触发待裁决重算|
+|PUT /claims/{id}/review|admin 留存主管复核依据|
+|POST /claims/{id}/assess|新增：缺覆盖依据或已过期的待裁决单可单独重算|
+
+覆盖判定在 `coverage_rule.py`（纯函数，便于单测），`risk_model.py` 评分时调用；`Claim` 新增 coverage、review_reason、review_basis、score_epoch 四列及 `model_state` 表，需重建演示卷生效。seed 新增 GC-2601（Orchard-60 新机型）/CL-NEWMODEL 与 GC-2602/CL-LOWHOURS（95h 低于训练工时下限 100h），分流后均转人工复核，可演练复核依据→签赔链路。
 
 ## 已知范围
 

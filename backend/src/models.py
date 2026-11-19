@@ -31,6 +31,10 @@ class Claim(Base):
     historical:Mapped[bool]=mapped_column(Boolean,default=False)
     disputed:Mapped[int|None]=mapped_column(Integer,nullable=True)
     assessment_note:Mapped[str]=mapped_column(Text,default='')
+    coverage:Mapped[str|None]=mapped_column(String(20),nullable=True)
+    review_reason:Mapped[str]=mapped_column(Text,default='')
+    review_basis:Mapped[str]=mapped_column(Text,default='')
+    score_epoch:Mapped[int|None]=mapped_column(Integer,nullable=True)
 class Inspection(Base):
     __tablename__='inspections'
     id:Mapped[int]=mapped_column(primary_key=True)
@@ -38,6 +42,12 @@ class Inspection(Base):
     findings:Mapped[str]=mapped_column(Text)
     evidence_complete:Mapped[bool]=mapped_column(Boolean,default=False)
     decision:Mapped[str]=mapped_column(String(30),default='pending')
+class ModelState(Base):
+    __tablename__='model_state'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    epoch:Mapped[int]=mapped_column(Integer,default=1)
+    upgraded_at:Mapped[str]=mapped_column(String(40),default='')
+    note:Mapped[str]=mapped_column(Text,default='')
 class Audit(Base):
     __tablename__='audit'
     id:Mapped[int]=mapped_column(primary_key=True)

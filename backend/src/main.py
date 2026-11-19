@@ -8,8 +8,8 @@ from redis import Redis
 from .database import Base,engine,Session
 from .models import User,Machine,Claim,Inspection,Audit
 from .security import current,allow,password_hash,token_for
-from .schemas import Login,MachineIn,ClaimIn,InspectionIn,DecisionIn
-from .claim_service import obj,get,audit,claim_view,submit,inspect,adjudicate
+from .schemas import Login,MachineIn,ClaimIn,InspectionIn,DecisionIn,ReviewIn,UpgradeIn
+from .claim_service import obj,get,audit,claim_view,submit,inspect,save_review,adjudicate,upgrade_model,current_epoch
 from .middlewares import RequestTrace,Recovery
 from .fulfilment_routes import router as fulfilment_router
 from .workshop_routes import router as workshop_router
@@ -67,13 +67,18 @@ def assess_claim(id:int,u=Depends(current)):
     allow(u,'admin','assessor')
     with Session.begin() as s:
         c=get(s,Claim,id)
-        if c.historical or c.status not in ['submitted','failed']:raise HTTPException(409,'当前索赔状态不可分流')
+        stale=c.status=='assessed' and (c.coverage is None or c.score_epoch!=current_epoch(s).epoch)
+        if c.historical or (c.status not in ['submitted','failed'] and not stale):raise HTTPException(409,'当前索赔状态不可分流')
         if c.hours_at_failure>s.get(Machine,c.machine_id).warranty_hours:
             c.status='out_of_warranty';c.assessment_note='超出质保工时';audit(s,u,'warranty_rejected',c.code)
         else:c.status='queued';audit(s,u,'risk_queued',c.code)
         result=claim_view(s,c)
     if result['status']=='queued':r.rpush('claim-risk',id)
     return result
+@app.put('/claims/{id}/review')
+def review_claim(id:int,data:ReviewIn,u=Depends(current)):
+    allow(u,'admin')
+    with Session.begin() as s:return save_review(s,get(s,Claim,id),data,u)
 @app.put('/claims/{id}/inspection')
 def save_inspection(id:int,data:InspectionIn,u=Depends(current)):
     allow(u,'admin','assessor')
@@ -81,7 +86,19 @@ def save_inspection(id:int,data:InspectionIn,u=Depends(current)):
 @app.post('/claims/{id}/decision')
 def decide(id:int,data:DecisionIn,u=Depends(current)):
     allow(u,'admin')
-    with Session.begin() as s:return adjudicate(s,get(s,Claim,id),data.decision,u)
+    with Session.begin() as s:return adjudicate(s,id,data.decision,u)
+@app.get('/model/state')
+def model_state(u=Depends(current)):
+    with Session.begin() as s:
+        st=current_epoch(s);return {'epoch':st.epoch,'upgraded_at':st.upgraded_at,'note':st.note}
+@app.post('/model/upgrade')
+def upgrade(data:UpgradeIn,u=Depends(current)):
+    allow(u,'admin')
+    with Session.begin() as s:
+        st,ids=upgrade_model(s,data.note,u)
+        result={'epoch':st.epoch,'requeued':len(ids)}
+    for cid in ids:r.rpush('claim-risk',cid)
+    return result
 @app.get('/audit')
 def audit_log(u=Depends(current)):
     with Session() as s:return [obj(x) for x in s.scalars(select(Audit).order_by(Audit.id.desc()).limit(40))]
